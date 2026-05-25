@@ -1,71 +1,51 @@
-from flask import Flask, render_template, request, redirect
-from flask_sqlalchemy import SQLAlchemy
-from flask_login import LoginManager, UserMixin, login_user, login_required
-from werkzeug.security import generate_password_hash, check_password_hash
+import os
+from flask import Flask, redirect, url_for, session
+from authlib.integrations.flask_client import OAuth
 
 app = Flask(__name__)
 
-app.config['SECRET_KEY'] = 'secret-key'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret")
 
-db = SQLAlchemy(app)
+oauth = OAuth(app)
 
-login_manager = LoginManager()
-login_manager.init_app(app)
+google = oauth.register(
+    name="google",
+    client_id=os.environ.get("GOOGLE_CLIENT_ID"),
+    client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
+    access_token_url="https://oauth2.googleapis.com/token",
+    authorize_url="https://accounts.google.com/o/oauth2/auth",
+    api_base_url="https://www.googleapis.com/oauth2/v1/",
+    client_kwargs={"scope": "openid email profile"},
+)
 
-class User(UserMixin, db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(100), unique=True)
-    password = db.Column(db.String(200))
-
-@login_manager.user_loader
-def load_user(user_id):
-    return User.query.get(int(user_id))
-
+# Home
 @app.route("/")
 def home():
-    return render_template("about.html")
+    if "user" in session:
+        return f"""
+        <h2>Logged in as {session['user']['email']}</h2>
+        <a href="/logout">Logout</a>
+        """
+    return '<a href="/login">Login with Google</a>'
 
-@app.route("/signup", methods=["GET", "POST"])
-def signup():
-
-    if request.method == "POST":
-
-        username = request.form["username"]
-        password = generate_password_hash(request.form["password"])
-
-        new_user = User(username=username, password=password)
-
-        db.session.add(new_user)
-        db.session.commit()
-
-        return redirect("/login")
-
-    return render_template("signup.html")
-
-@app.route("/login", methods=["GET", "POST"])
+# Login
+@app.route("/login")
 def login():
+    return google.authorize_redirect(url_for("authorize", _external=True))
 
-    if request.method == "POST":
+# Callback
+@app.route("/authorize")
+def authorize():
+    token = google.authorize_access_token()
+    user = google.get("userinfo").json()
+    session["user"] = user
+    return redirect(url_for("home"))
 
-        username = request.form["username"]
-        password = request.form["password"]
-
-        user = User.query.filter_by(username=username).first()
-
-        if user and check_password_hash(user.password, password):
-            login_user(user)
-            return redirect("/dashboard")
-
-    return render_template("login.html")
-
-@app.route("/dashboard")
-@login_required
-def dashboard():
-    return "Welcome to your dashboard!"
-
-with app.app_context():
-    db.create_all()
+# Logout
+@app.route("/logout")
+def logout():
+    session.pop("user", None)
+    return redirect(url_for("home"))
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
