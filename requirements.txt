@@ -3,3 +3,5 @@ gunicorn
 Flask-Login
 Flask-SQLAlchemy
 Werkzeug
+Authlib
+requests
